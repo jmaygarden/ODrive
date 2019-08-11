@@ -1,6 +1,6 @@
 #include <math.h>
 #include <algorithm>
-#include <trapTraj.hpp>
+#include "trapTraj.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -218,7 +218,7 @@ TEST_CASE("handbrake"){
     float lastTime = 0.0f;
     for(int i = 0; i < 1000; ++i){
         auto step = trapTraj.eval(time);
-        cout << time+lastTime << "," << step.Y << "," << step.Yd << "," << step.Ydd << "\n";
+        // cout << time+lastTime << "," << step.Y << "," << step.Yd << "," << step.Ydd << "\n";
         if(i == 500){
             lastTime = time;
             Xi = step.Y;
@@ -228,6 +228,32 @@ TEST_CASE("handbrake"){
             dT = trapTraj.Tf_ / 500.0f;
             time = 0.0f;
         }
+        time += dT;
+    }
+}
+
+TEST_CASE("Homing"){
+    TrapezoidalTrajectory::Config_t config;
+    TrapezoidalTrajectory trapTraj(config);
+
+    float Xi = -60.0f;
+    float Xf = 0.0f;
+    float Vi = 0.0f;
+
+    config.accel_limit = 5000.0f;
+    config.decel_limit = 5000.0f;
+    config.vel_limit = 2000.0f;
+
+    const auto numPoints = 100;
+
+    trapTraj.planTrapezoidal(Xf, Xi, Vi, config.vel_limit, config.accel_limit, config.decel_limit);
+    float dT = trapTraj.Tf_ / numPoints;
+    float time = 0;
+
+    float lastTime = 0.0f;
+    for(int i = 0; i < numPoints; ++i){
+        auto step = trapTraj.eval(time);
+        cout << time+lastTime << "," << step.Y << "," << step.Yd << "," << step.Ydd << "\n";
         time += dT;
     }
 }

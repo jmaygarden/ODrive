@@ -140,6 +140,13 @@ else:
 odrv.config.brake_resistance = readFloat("Brake resistance", 0, math.inf, 'ohm')
 
 print()
+if readYesNo("Setup Trapezoidal Trajectory Planning?"):
+    axis.trap_traj.vel_limit = readFloat("Desired speed during move", 0, inf, "counts/s")
+    axis.trap_traj.accel_limit = readFloat("Desired acceleration at beginning of move", 0, inf, 'counts/s^2')
+    axis.trap_traj.decel_limit = readFloat("Desired deceleration at end of move", 0, inf, 'counts/s^2')
+    axis.trap_traj.A_per_css = readFloat("Amps per unit of acceleration", 0, inf, 'A/(count/s^2)')
+
+print()
 if readYesNo("ODrive will reboot.  Save Configuration?"):
     odrv.save_configuration()
 odrv.reboot()

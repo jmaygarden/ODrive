@@ -55,12 +55,12 @@ print("Forums: https://discourse.odriverobotics.com/")
 print("Discord: https://discord.gg/k3ZZ3mS")
 print("Github: https://github.com/madcowswe/ODrive/")
 
+print()
 print('Finding an ODrive...')
 odrv = odrive.find_any()
 print('ODrive '+str(hex(odrv.serial_number))+' found')
+
 print()
-
-
 axisNum = readSelection("Which Axis do you want to configure? ", 0, 1)
 if(axisNum == 0):
     axis = odrv.axis0
@@ -137,7 +137,10 @@ else:
     axis.config.startup_closed_loop_control = False
     axis.config.startup_encoder_index_search = False
 
-odrv.config.brake_resistance = readFloat("Brake resistance", 0, math.inf, 'ohm')
+if readYesNo("Use brake resistor?"):
+    odrv.config.brake_resistance = readFloat("Brake resistance", 0, math.inf, 'ohm')
+else:
+    odrv.config.brake_resistance = 0.0
 
 print()
 if readYesNo("Setup Trapezoidal Trajectory Planning?"):
@@ -145,6 +148,11 @@ if readYesNo("Setup Trapezoidal Trajectory Planning?"):
     axis.trap_traj.config.accel_limit = readFloat("Desired acceleration at beginning of move", 0, math.inf, 'counts/s^2')
     axis.trap_traj.config.decel_limit = readFloat("Desired deceleration at end of move", 0, math.inf, 'counts/s^2')
     axis.trap_traj.config.A_per_css = readFloat("Amps per unit of acceleration", 0, math.inf, 'A/(count/s^2)')
+else:
+    axis.trap_traj.config.vel_limit = 0
+    axis.trap_traj.config.accel_limit = 0
+    axis.trap_traj.config.decel_limit = 0
+    axis.trap_traj.config.A_per_css = 0
 
 print()
 if readYesNo("ODrive will reboot.  Save Configuration?"):

@@ -149,9 +149,9 @@ if readYesNo("Setup Trapezoidal Trajectory Planning?"):
     axis.trap_traj.config.decel_limit = readFloat("Desired deceleration at end of move", 0, math.inf, 'counts/s^2')
     axis.trap_traj.config.A_per_css = readFloat("Amps per unit of acceleration", 0, math.inf, 'A/(count/s^2)')
 else:
-    axis.trap_traj.config.vel_limit = 0
-    axis.trap_traj.config.accel_limit = 0
-    axis.trap_traj.config.decel_limit = 0
+    axis.trap_traj.config.vel_limit = 10000
+    axis.trap_traj.config.accel_limit = 30000
+    axis.trap_traj.config.decel_limit = 30000
     axis.trap_traj.config.A_per_css = 0
 
 print()

@@ -6,7 +6,7 @@
 class CANSimple {
    public:
     enum {
-        MSG_CO_NMT_CTRL = 0x000,       // CANOpen NMT Message REC
+        MSG_CO_NMT_CTRL = 0x000,  // CANOpen NMT Message REC
         MSG_ODRIVE_HEARTBEAT,
         MSG_ODRIVE_ESTOP,
         MSG_GET_MOTOR_ERROR,  // Errors
@@ -31,11 +31,14 @@ class CANSimple {
         MSG_RESET_ODRIVE,
         MSG_GET_VBUS_VOLTAGE,
         MSG_CLEAR_ERRORS,
+        MSG_GET_AXIS_STATUS,
+        MSG_ODRIVE_FEEDBACK,
         MSG_CO_HEARTBEAT_CMD = 0x700,  // CANOpen NMT Heartbeat  SEND
     };
 
     static void handle_can_message(can_Message_t& msg);
     static void send_heartbeat(Axis* axis);
+    static void send_feedback(Axis* axis);
 
    private:
     static void nmt_callback(Axis* axis, can_Message_t& msg);
@@ -62,6 +65,7 @@ class CANSimple {
     static void get_sensorless_estimates_callback(Axis* axis, can_Message_t& msg);
     static void get_vbus_voltage_callback(Axis* axis, can_Message_t& msg);
     static void clear_errors_callback(Axis* axis, can_Message_t& msg);
+    static void get_axis_status(Axis* axis, can_Message_t& msg);
 
     // Utility functions
     static uint8_t get_node_id(uint32_t msgID);
@@ -76,9 +80,5 @@ class CANSimple {
     //     {0x000, std::bind(&CANSimple::heartbeat_callback, this, _1)}
     // };
 };
-
-
-
-
 
 #endif

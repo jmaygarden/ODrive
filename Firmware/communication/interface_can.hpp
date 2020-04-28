@@ -3,31 +3,33 @@
 
 #include <cmsis_os.h>
 #include <stm32f4xx_hal.h>
+
+#include "can_helpers.hpp"
 #include "fibre/protocol.hpp"
 #include "odrive_main.h"
-#include "can_helpers.hpp"
 
 #define CAN_CLK_HZ (42000000)
 #define CAN_CLK_MHZ (42)
 
 // Anonymous enum for defining the most common CAN baud rates
 enum {
-    CAN_BAUD_125K   = 125000,
-    CAN_BAUD_250K   = 250000,
-    CAN_BAUD_500K   = 500000,
-    CAN_BAUD_1000K  = 1000000,
-    CAN_BAUD_1M     = 1000000
+    CAN_BAUD_125K = 125000,
+    CAN_BAUD_250K = 250000,
+    CAN_BAUD_500K = 500000,
+    CAN_BAUD_1000K = 1000000,
+    CAN_BAUD_1M = 1000000
 };
 
 enum CAN_Protocol_t {
-    CAN_PROTOCOL_SIMPLE
+    CAN_PROTOCOL_SIMPLE,
+    CAN_PROTOCOL_FEEDBACK
 };
 
 class ODriveCAN {
    public:
     struct Config_t {
-        uint32_t baud = CAN_BAUD_250K;
-        CAN_Protocol_t protocol = CAN_PROTOCOL_SIMPLE;
+        uint32_t baud = CAN_BAUD_1M;
+        CAN_Protocol_t protocol = CAN_PROTOCOL_FEEDBACK;
     };
 
     enum Error_t {
@@ -39,7 +41,7 @@ class ODriveCAN {
 
     // Thread Relevant Data
     osThreadId thread_id_;
-    const uint32_t stack_size_ = 1024; // Bytes
+    const uint32_t stack_size_ = 1024;  // Bytes
     Error_t error_ = ERROR_NONE;
 
     volatile bool thread_id_valid_ = false;
@@ -71,7 +73,6 @@ class ODriveCAN {
 
     void set_baud_rate(uint32_t baudRate);
 };
-
 
 DEFINE_ENUM_FLAG_OPERATORS(ODriveCAN::Error_t)
 

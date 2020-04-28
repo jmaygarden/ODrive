@@ -1,5 +1,6 @@
 
 #include "can_simple.hpp"
+
 #include <odrive_main.h>
 
 #include <cstring>
@@ -117,6 +118,9 @@ void CANSimple::handle_can_message(can_Message_t& msg) {
                 break;
             case MSG_CLEAR_ERRORS:
                 clear_errors_callback(axis, msg);
+                break;
+            case MSG_GET_AXIS_STATUS:
+                get_axis_status(axis, msg);
                 break;
             default:
                 break;
@@ -279,14 +283,14 @@ void CANSimple::get_encoder_count_callback(Axis* axis, can_Message_t& msg) {
 }
 
 void CANSimple::set_input_pos_callback(Axis* axis, can_Message_t& msg) {
-    axis->controller_.input_pos_     = can_getSignal<int32_t>(msg, 0, 32, true);
-    axis->controller_.input_vel_     = can_getSignal<int16_t>(msg, 32, 16, true, 0.1f, 0);
+    axis->controller_.input_pos_ = can_getSignal<int32_t>(msg, 0, 32, true);
+    axis->controller_.input_vel_ = can_getSignal<int16_t>(msg, 32, 16, true, 0.1f, 0);
     axis->controller_.input_current_ = can_getSignal<int16_t>(msg, 48, 16, true, 0.01f, 0);
     axis->controller_.input_pos_updated();
 }
 
 void CANSimple::set_input_vel_callback(Axis* axis, can_Message_t& msg) {
-    axis->controller_.input_vel_     = can_getSignal<int32_t>(msg, 0, 32, true, 0.01f, 0.0f);
+    axis->controller_.input_vel_ = can_getSignal<int32_t>(msg, 0, 32, true, 0.01f, 0.0f);
     axis->controller_.input_current_ = can_getSignal<int16_t>(msg, 32, 16, true, 0.01f, 0.0f);
 }
 
@@ -382,8 +386,33 @@ void CANSimple::clear_errors_callback(Axis* axis, can_Message_t& msg) {
     axis->clear_errors();
 }
 
+void CANSimple::get_axis_status(Axis* axis, can_Message_t& msg) {
+    if (msg.rtr) {
+        can_Message_t txmsg;
+
+        txmsg.id = axis->config_.can_node_id << NUM_CMD_ID_BITS;
+        txmsg.id += MSG_GET_AXIS_STATUS;  // heartbeat ID
+        txmsg.isExt = false;
+        txmsg.len = 8;
+
+        // Axis errors in 1st 32-bit value
+        txmsg.buf[0] = axis->error_;
+        txmsg.buf[1] = axis->error_ >> 8;
+        txmsg.buf[2] = axis->error_ >> 16;
+        txmsg.buf[3] = axis->error_ >> 24;
+
+        // Current state of axis in 2nd 32-bit value
+        txmsg.buf[4] = axis->current_state_;
+        txmsg.buf[5] = axis->current_state_ >> 8;
+        txmsg.buf[6] = axis->current_state_ >> 16;
+        txmsg.buf[7] = axis->current_state_ >> 24;
+        odCAN->write(txmsg);
+    }
+}
+
 void CANSimple::send_heartbeat(Axis* axis) {
     can_Message_t txmsg;
+
     txmsg.id = axis->config_.can_node_id << NUM_CMD_ID_BITS;
     txmsg.id += MSG_ODRIVE_HEARTBEAT;  // heartbeat ID
     txmsg.isExt = false;
@@ -400,6 +429,34 @@ void CANSimple::send_heartbeat(Axis* axis) {
     txmsg.buf[5] = axis->current_state_ >> 8;
     txmsg.buf[6] = axis->current_state_ >> 16;
     txmsg.buf[7] = axis->current_state_ >> 24;
+    odCAN->write(txmsg);
+}
+
+void CANSimple::send_feedback(Axis* axis) {
+    can_Message_t txmsg;
+    txmsg.id = axis->config_.can_node_id << NUM_CMD_ID_BITS;
+    txmsg.id += MSG_ODRIVE_FEEDBACK;  // heartbeat ID
+    txmsg.isExt = false;
+    txmsg.len = 8;
+
+    // Encoder position estimate
+    uint32_t floatBytes;
+    static_assert(sizeof axis->encoder_.pos_estimate_ == sizeof floatBytes);
+    std::memcpy(&floatBytes, &axis->encoder_.pos_estimate_, sizeof floatBytes);
+
+    txmsg.buf[0] = floatBytes;
+    txmsg.buf[1] = floatBytes >> 8;
+    txmsg.buf[2] = floatBytes >> 16;
+    txmsg.buf[3] = floatBytes >> 24;
+
+    // Measured motor current
+    static_assert(sizeof floatBytes == sizeof axis->motor_.current_control_.Iq_measured);
+    std::memcpy(&floatBytes, &axis->motor_.current_control_.Iq_measured, sizeof floatBytes);
+    txmsg.buf[4] = floatBytes;
+    txmsg.buf[5] = floatBytes >> 8;
+    txmsg.buf[6] = floatBytes >> 16;
+    txmsg.buf[7] = floatBytes >> 24;
+
     odCAN->write(txmsg);
 }
 

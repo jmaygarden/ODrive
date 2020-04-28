@@ -1,12 +1,12 @@
 #include "interface_can.hpp"
 
-#include "fibre/crc.hpp"
-#include "freertos_vars.h"
-#include "utils.hpp"
-
 #include <can.h>
 #include <cmsis_os.h>
 #include <stm32f4xx_hal.h>
+
+#include "fibre/crc.hpp"
+#include "freertos_vars.h"
+#include "utils.hpp"
 
 // Specific CAN Protocols
 #include "can_simple.hpp"
@@ -33,6 +33,7 @@ void ODriveCAN::can_server_thread() {
                 read(rxmsg);
                 switch (config_.protocol) {
                     case CAN_PROTOCOL_SIMPLE:
+                    case CAN_PROTOCOL_FEEDBACK:
                         CANSimple::handle_can_message(rxmsg);
                         break;
                 }
@@ -185,6 +186,9 @@ void ODriveCAN::send_heartbeat(Axis *axis) {
             switch (config_.protocol) {
                 case CAN_PROTOCOL_SIMPLE:
                     CANSimple::send_heartbeat(axis);
+                    break;
+                case CAN_PROTOCOL_FEEDBACK:
+                    CANSimple::send_feedback(axis);
                     break;
             }
             axis->last_heartbeat_ = now;

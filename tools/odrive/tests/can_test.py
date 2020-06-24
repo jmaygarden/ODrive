@@ -17,8 +17,8 @@ command_set = {
     'estop': (0x002, []), # tested
     'get_motor_error': (0x003, [('motor_error', 'I', 1)]), # untested
     'get_encoder_error': (0x004, [('encoder_error', 'I', 1)]), # untested
-    'get_sensorless_error': (0x004, [('sensorless_error', 'I', 1)]), # untested
-    'set_node_id': (0x006, [('node_id', 'H', 1)]), # tested
+    'get_sensorless_error': (0x005, [('sensorless_error', 'I', 1)]), # untested
+    'set_node_id': (0x006, [('node_id', 'I', 1)]), # tested
     'set_requested_state': (0x007, [('requested_state', 'I', 1)]), # tested
     # 0x008 not yet implemented
     'get_encoder_estimates': (0x009, [('encoder_pos_estimate', 'f', 1), ('encoder_vel_estimate', 'f', 1)]), # partially tested
@@ -26,7 +26,7 @@ command_set = {
     'set_controller_modes': (0x00b, [('control_mode', 'i', 1), ('input_mode', 'i', 1)]), # tested
     'set_input_pos': (0x00c, [('input_pos', 'i', 1), ('vel_ff', 'h', 0.1), ('cur_ff', 'h', 0.01)]), # tested
     'set_input_vel': (0x00d, [('input_vel', 'i', 0.01), ('cur_ff', 'h', 0.01)]), # tested
-    'set_input_current': (0x00e, [('input_current', 'i', 0.01)]), # tested
+    'set_input_torque': (0x00e, [('input_torque', 'i', 0.01)]), # tested
     'set_velocity_limit': (0x00f, [('velocity_limit', 'f', 1)]), # tested
     'start_anticogging': (0x010, []), # untested
     'set_traj_vel_limit': (0x011, [('traj_vel_limit', 'f', 1)]), # tested
@@ -39,7 +39,7 @@ command_set = {
     'clear_errors': (0x018, []), # partially tested
 }
 
-def command(bus, node_id_, cmd_name, **kwargs):
+def command(bus, node_id_, extended_id, cmd_name, **kwargs):
     cmd_spec = command_set[cmd_name]
     cmd_id = cmd_spec[0]
     fmt = '<' + ''.join([f for (n, f, s) in cmd_spec[1]]) # all little endian
@@ -49,10 +49,10 @@ def command(bus, node_id_, cmd_name, **kwargs):
 
     fields = [((kwargs[n] / s) if f == 'f' else int(kwargs[n] / s)) for (n, f, s) in cmd_spec[1]]
     data = struct.pack(fmt, *fields)
-    msg = can.Message(arbitration_id=((node_id_ << 5) | cmd_id), data=data)
+    msg = can.Message(arbitration_id=((node_id_ << 5) | cmd_id), extended_id=extended_id, data=data)
     bus.send(msg)
 
-async def record_messages(bus, node_id, cmd_name, timeout = 5.0):
+async def record_messages(bus, node_id, extended_id, cmd_name, timeout = 5.0):
     """
     Returns an async generator that yields a dictionary for each CAN message that
     is received, provided that the CAN ID matches the expected value.
@@ -71,7 +71,7 @@ async def record_messages(bus, node_id, cmd_name, timeout = 5.0):
         start = time.monotonic()
         while True:
             msg = await reader.get_message()
-            if ((msg.arbitration_id == ((node_id << 5) | cmd_id)) and not msg.is_remote_frame):
+            if ((msg.arbitration_id == ((node_id << 5) | cmd_id)) and (msg.is_extended_id == extended_id) and not msg.is_remote_frame):
                 fields = struct.unpack(fmt, msg.data[:(struct.calcsize(fmt))]) 
                 res = {n: (fields[i] * s) for (i, (n, f, s)) in enumerate(cmd_spec[1])}
                 res['t'] = time.monotonic()
@@ -81,13 +81,13 @@ async def record_messages(bus, node_id, cmd_name, timeout = 5.0):
     finally:
         notifier.stop()
 
-async def request(bus, node_id, cmd_name, timeout = 1.0):
+async def request(bus, node_id, extended_id, cmd_name, timeout = 1.0):
     cmd_spec = command_set[cmd_name]
     cmd_id = cmd_spec[0]
 
-    msg_generator = record_messages(bus, node_id, cmd_name, timeout)
+    msg_generator = record_messages(bus, node_id, extended_id, cmd_name, timeout)
 
-    msg = can.Message(arbitration_id=((node_id << 5) | cmd_id), data=[], is_remote_frame=True)
+    msg = can.Message(arbitration_id=((node_id << 5) | cmd_id), extended_id=extended_id, data=[], is_remote_frame=True)
     bus.send(msg)
 
     async for msg in msg_generator:
@@ -102,33 +102,43 @@ async def get_all(async_iterator):
 class TestSimpleCAN():
     def get_test_cases(self, testrig: TestRig):
         for odrive in testrig.get_components(ODriveComponent):
-            can_interfaces = testrig.get_connected_components(odrive.can, CanInterfaceComponent)
-            yield (odrive, list(can_interfaces))
+            can_interfaces = list(testrig.get_connected_components(odrive.can, CanInterfaceComponent))
+            yield (odrive, can_interfaces, 0, False) # standard ID
+            yield (odrive, can_interfaces, 0xfedcba, True) # extended ID
 
-    def run_test(self, odrive: ODriveComponent, canbus: CanInterfaceComponent, logger: Logger):
+    def run_test(self, odrive: ODriveComponent, canbus: CanInterfaceComponent, node_id: int, extended_id: bool, logger: Logger):
 
         # make sure no gpio input is overwriting our values
         odrive.unuse_gpios()
 
-        node_id = 0
         axis = odrive.handle.axis0
+        axis.config.enable_watchdog = False
+        axis.clear_errors()
         axis.config.can_node_id = node_id
+        axis.config.can_node_id_extended = extended_id
         time.sleep(0.1)
         
-        def my_cmd(cmd_name, **kwargs): command(canbus.handle, node_id, cmd_name, **kwargs)
-        def my_req(cmd_name, **kwargs): return asyncio.run(request(canbus.handle, node_id, cmd_name, **kwargs))
+        def my_cmd(cmd_name, **kwargs): command(canbus.handle, node_id, extended_id, cmd_name, **kwargs)
+        def my_req(cmd_name, **kwargs): return asyncio.run(request(canbus.handle, node_id, extended_id, cmd_name, **kwargs))
         def fence(): my_req('get_vbus_voltage') # fence to ensure the CAN command was sent
 
         test_assert_eq(my_req('get_vbus_voltage')['vbus_voltage'], odrive.handle.vbus_voltage, accuracy=0.01)
 
         my_cmd('set_node_id', node_id=node_id+20)
-        asyncio.run(request(canbus.handle, node_id+20, 'get_vbus_voltage'))
+        asyncio.run(request(canbus.handle, node_id+20, extended_id, 'get_vbus_voltage'))
         test_assert_eq(axis.config.can_node_id, node_id+20)
 
         # Reset node ID to default value
-        command(canbus.handle, node_id+20, 'set_node_id', node_id=node_id)
+        command(canbus.handle, node_id+20, extended_id, 'set_node_id', node_id=node_id)
         fence()
         test_assert_eq(axis.config.can_node_id, node_id)
+
+        # Check that extended node IDs are not carelessly projected to 6-bit IDs
+        extended_id = not extended_id
+        my_cmd('estop') # should not be accepted
+        extended_id = not extended_id
+        fence()
+        test_assert_eq(axis.error, AXIS_ERROR_NONE)
 
         axis.encoder.set_linear_count(123)
         test_assert_eq(my_req('get_encoder_estimates')['encoder_pos_estimate'], 123.0, accuracy=0.01)
@@ -140,12 +150,12 @@ class TestSimpleCAN():
 
         my_cmd('estop')
         fence()
-        test_assert_eq(axis.error, errors.axis.ERROR_ESTOP_REQUESTED)
+        test_assert_eq(axis.error, AXIS_ERROR_ESTOP_REQUESTED)
 
         my_cmd('set_requested_state', requested_state=42) # illegal state - should assert axis error
         fence()
         test_assert_eq(axis.current_state, 1) # idle
-        test_assert_eq(axis.error, errors.axis.ERROR_ESTOP_REQUESTED | errors.axis.ERROR_INVALID_STATE)
+        test_assert_eq(axis.error, AXIS_ERROR_ESTOP_REQUESTED | AXIS_ERROR_INVALID_STATE)
 
         my_cmd('clear_errors')
         fence()
@@ -164,23 +174,23 @@ class TestSimpleCAN():
 
         axis.controller.input_pos = 1234
         axis.controller.input_vel = 1234
-        axis.controller.input_current = 1234
+        axis.controller.input_torque = 1234
         my_cmd('set_input_pos', input_pos=1, vel_ff=2, cur_ff=3)
         fence()
         test_assert_eq(axis.controller.input_pos, 1.0, range=0.1)
         test_assert_eq(axis.controller.input_vel, 2.0, range=0.01)
-        test_assert_eq(axis.controller.input_current, 3.0, range=0.001)
+        test_assert_eq(axis.controller.input_torque, 3.0, range=0.001)
 
-        axis.controller.config.control_mode = CTRL_MODE_VELOCITY_CONTROL
+        axis.controller.config.control_mode = CONTROL_MODE_VELOCITY_CONTROL
         my_cmd('set_input_vel', input_vel=-10.0, cur_ff=30.1234)
         fence()
         test_assert_eq(axis.controller.input_vel, -10.0, range=0.01)
-        test_assert_eq(axis.controller.input_current, 30.1234, range=0.01)
+        test_assert_eq(axis.controller.input_torque, 30.1234, range=0.01)
 
-        axis.controller.config.control_mode = CTRL_MODE_CURRENT_CONTROL
-        my_cmd('set_input_current', input_current=3.1415)
+        axis.controller.config.control_mode = CONTROL_MODE_TORQUE_CONTROL
+        my_cmd('set_input_torque', input_torque=0.1)
         fence()
-        test_assert_eq(axis.controller.input_current, 3.1415, range=0.01)
+        test_assert_eq(axis.controller.input_torque, 0.1, range=0.01)
 
         my_cmd('set_velocity_limit', velocity_limit=23456.78)
         fence()
@@ -200,15 +210,15 @@ class TestSimpleCAN():
         test_assert_eq(axis.controller.config.inertia, 55.086, range=0.0001)
 
         # any CAN cmd will feed the watchdog
-        test_watchdog(axis, lambda: my_cmd('set_input_current', input_current=0.0), logger)
+        test_watchdog(axis, lambda: my_cmd('set_input_torque', input_torque=0.0), logger)
 
         logger.debug('testing heartbeat...')
         # note that this will include the heartbeats that were received during the
         # watchdog test (which takes 4.8s).
-        heartbeats = asyncio.run(get_all(record_messages(canbus.handle, node_id, 'heartbeat', timeout = 1.0)))
+        heartbeats = asyncio.run(get_all(record_messages(canbus.handle, node_id, extended_id, 'heartbeat', timeout = 1.0)))
         test_assert_eq(len(heartbeats), 5.8 / 0.1, accuracy=0.05)
         test_assert_eq([msg['error'] for msg in heartbeats[0:35]], [0] * 35) # before watchdog expiry
-        test_assert_eq([msg['error'] for msg in heartbeats[-10:]], [errors.axis.ERROR_WATCHDOG_TIMER_EXPIRED] * 10) # after watchdog expiry
+        test_assert_eq([msg['error'] for msg in heartbeats[-10:]], [AXIS_ERROR_WATCHDOG_TIMER_EXPIRED] * 10) # after watchdog expiry
         test_assert_eq([msg['current_state'] for msg in heartbeats], [1] * len(heartbeats))
 
         logger.debug('testing reboot...')

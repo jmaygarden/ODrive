@@ -20,7 +20,7 @@ class CANSimple {
         MSG_SET_CONTROLLER_MODES,
         MSG_SET_INPUT_POS,
         MSG_SET_INPUT_VEL,
-        MSG_SET_INPUT_CURRENT,
+        MSG_SET_INPUT_TORQUE,
         MSG_SET_VEL_LIMIT,
         MSG_START_ANTICOGGING,
         MSG_SET_TRAJ_VEL_LIMIT,
@@ -54,7 +54,7 @@ class CANSimple {
     static void get_encoder_count_callback(Axis* axis, can_Message_t& msg);
     static void set_input_pos_callback(Axis* axis, can_Message_t& msg);
     static void set_input_vel_callback(Axis* axis, can_Message_t& msg);
-    static void set_input_current_callback(Axis* axis, can_Message_t& msg);
+    static void set_input_torque_callback(Axis* axis, can_Message_t& msg);
     static void set_controller_modes_callback(Axis* axis, can_Message_t& msg);
     static void set_vel_limit_callback(Axis* axis, can_Message_t& msg);
     static void start_anticogging_callback(Axis* axis, can_Message_t& msg);
@@ -68,7 +68,7 @@ class CANSimple {
     static void get_axis_status(Axis* axis, can_Message_t& msg);
 
     // Utility functions
-    static uint8_t get_node_id(uint32_t msgID);
+    static uint32_t get_node_id(uint32_t msgID);
     static uint8_t get_cmd_id(uint32_t msgID);
 
     // Fetch a specific signal from the message

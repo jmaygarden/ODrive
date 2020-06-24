@@ -127,7 +127,7 @@ bool Motor::check_DRV_fault() {
     GPIO_PinState nFAULT_state = HAL_GPIO_ReadPin(gate_driver_config_.nFAULT_port, gate_driver_config_.nFAULT_pin);
     if (nFAULT_state == GPIO_PIN_RESET) {
         // Update DRV Fault Code
-        drv_fault_ = DRV8301_getFaultType(&gate_driver_);
+        gate_driver_exported_.drv_fault = (GateDriverIntf::DrvFault)DRV8301_getFaultType(&gate_driver_);
         // Update/Cache all SPI device registers
         // DRV_SPI_8301_Vars_t* local_regs = &gate_driver_regs_;
         // local_regs->RcvCmd = true;
@@ -137,7 +137,7 @@ bool Motor::check_DRV_fault() {
     return true;
 }
 
-void Motor::set_error(Motor::Error_t error){
+void Motor::set_error(Motor::Error error){
     error_ |= error;
     axis_->error_ |= Axis::ERROR_MOTOR_FAILED;
     safety_critical_disarm_motor_pwm(*this);
@@ -182,7 +182,7 @@ float Motor::effective_current_lim() {
     float current_lim = config_.current_lim;
     // Hardware limit
     if (axis_->motor_.config_.motor_type == Motor::MOTOR_TYPE_GIMBAL) {
-        current_lim = std::min(current_lim, 0.98f*one_by_sqrt3*vbus_voltage);
+        current_lim = std::min(current_lim, 0.98f*one_by_sqrt3*vbus_voltage); //gimbal motor is voltage control
     } else {
         current_lim = std::min(current_lim, axis_->motor_.current_control_.max_allowed_current);
     }
@@ -190,6 +190,21 @@ float Motor::effective_current_lim() {
     current_lim = std::min(current_lim, thermal_current_lim_);
 
     return current_lim;
+}
+
+//return the maximum available torque for the motor.
+//Note - for ACIM motors, available torque is allowed to be 0.
+float Motor::max_available_torque() {
+    if (config_.motor_type == Motor::MOTOR_TYPE_ACIM) {
+        float max_torque = effective_current_lim() * config_.torque_constant * current_control_.acim_rotor_flux;
+        max_torque = std::clamp(max_torque, 0.0f, config_.torque_lim);
+        return max_torque;
+    }
+    else {
+        float max_torque = effective_current_lim() * config_.torque_constant;
+        max_torque = std::clamp(max_torque, 0.0f, config_.torque_lim);
+        return max_torque;
+    }
 }
 
 void Motor::log_timing(TimingLog_t log_idx) {
@@ -216,7 +231,7 @@ float Motor::phase_current_from_adcval(uint32_t ADCValue) {
 // TODO check Ibeta balance to verify good motor connection
 bool Motor::measure_phase_resistance(float test_current, float max_voltage) {
     static const float kI = 10.0f;                                 // [(V/s)/A]
-    static const int num_test_cycles = static_cast<int>(3.0f / CURRENT_MEAS_PERIOD); // Test runs for 3s
+    static const int num_test_cycles = (int)(3.0f / CURRENT_MEAS_PERIOD); // Test runs for 3s
     float test_voltage = 0.0f;
     
     size_t i = 0;
@@ -329,7 +344,7 @@ bool Motor::FOC_voltage(float v_d, float v_q, float pwm_phase) {
     float c = our_arm_cos_f32(pwm_phase);
     float s = our_arm_sin_f32(pwm_phase);
     float v_alpha = c*v_d - s*v_q;
-    float v_beta  = c*v_q + s*v_d;
+    float v_beta = c*v_q + s*v_d;
     return enqueue_voltage_timings(v_alpha, v_beta);
 }
 
@@ -400,7 +415,7 @@ bool Motor::FOC_current(float Id_des, float Iq_des, float I_phase, float pwm_pha
     float c_p = our_arm_cos_f32(pwm_phase);
     float s_p = our_arm_sin_f32(pwm_phase);
     float mod_alpha = c_p * mod_d - s_p * mod_q;
-    float mod_beta  = c_p * mod_q + s_p * mod_d;
+    float mod_beta = c_p * mod_q + s_p * mod_d;
 
     // Report final applied voltage in stationary frame (for sensorles estimator)
     ictrl.final_v_alpha = mod_to_V * mod_alpha;
@@ -440,16 +455,23 @@ bool Motor::FOC_current(float Id_des, float Iq_des, float I_phase, float pwm_pha
 }
 
 
-bool Motor::update(float current_setpoint, float phase, float phase_vel) {
-    current_setpoint *= config_.direction;
+bool Motor::update(float torque_setpoint, float phase, float phase_vel) {
+    float current_setpoint = 0.0f;
     phase *= config_.direction;
     phase_vel *= config_.direction;
 
+    if (config_.motor_type == MOTOR_TYPE_ACIM) {
+        current_setpoint = torque_setpoint / (config_.torque_constant * fmax(current_control_.acim_rotor_flux, config_.acim_gain_min_flux));
+    }
+    else {
+        current_setpoint = torque_setpoint / config_.torque_constant;
+    }
+    current_setpoint *= config_.direction;
+
     // TODO: 2-norm vs independent clamping (current could be sqrt(2) bigger)
     float ilim = effective_current_lim();
-    // TODO: use std::clamp (C++17)
-    float id = MACRO_MIN(MACRO_MAX(current_control_.Id_setpoint, -ilim), ilim);
-    float iq = MACRO_MIN(MACRO_MAX(current_setpoint, -ilim), ilim);
+    float id = std::clamp(current_control_.Id_setpoint, -ilim, ilim);
+    float iq = std::clamp(current_setpoint, -ilim, ilim);
 
     if (config_.motor_type == MOTOR_TYPE_ACIM) {
         // Note that the effect of the current commands on the real currents is actually 1.5 PWM cycles later
@@ -460,7 +482,7 @@ bool Motor::update(float current_setpoint, float phase, float phase_vel) {
             float abs_iq = fabsf(iq);
             float gain = abs_iq > id ? config_.acim_autoflux_attack_gain : config_.acim_autoflux_decay_gain;
             id += gain * (abs_iq - id) * current_meas_period;
-            id = MACRO_MIN(MACRO_MAX(id, config_.acim_autoflux_min_Id), ilim);
+            id = std::clamp(id, config_.acim_autoflux_min_Id, ilim);
             current_control_.Id_setpoint = id;
         }
 
@@ -485,22 +507,11 @@ bool Motor::update(float current_setpoint, float phase, float phase_vel) {
     float pwm_phase = phase + 1.5f * current_meas_period * phase_vel;
 
     // Execute current command
-    // TODO: move this into the mot
-    if (config_.motor_type == MOTOR_TYPE_HIGH_CURRENT) {
-        if(!FOC_current(id, iq, phase, pwm_phase)){
-            return false;
-        }
-    } else if (config_.motor_type == MOTOR_TYPE_ACIM) {
-        if(!FOC_current(id, iq, phase, pwm_phase)){
-            return false;
-        }
-    } else if (config_.motor_type == MOTOR_TYPE_GIMBAL) {
-        //In gimbal motor mode, current is reinterptreted as voltage.
-        if(!FOC_voltage(id, iq, pwm_phase))
-            return false;
-    } else {
-        set_error(ERROR_NOT_IMPLEMENTED_MOTOR_TYPE);
-        return false;
+    switch(config_.motor_type){
+        case MOTOR_TYPE_HIGH_CURRENT: return FOC_current(id, iq, phase, pwm_phase); break;
+        case MOTOR_TYPE_ACIM: return FOC_current(id, iq, phase, pwm_phase); break;
+        case MOTOR_TYPE_GIMBAL: return FOC_voltage(id, iq, pwm_phase); break;
+        default: set_error(ERROR_NOT_IMPLEMENTED_MOTOR_TYPE); return false; break;
     }
     return true;
 }

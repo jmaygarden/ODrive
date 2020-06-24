@@ -25,7 +25,7 @@ Axis::Axis(int axis_num,
       sensorless_estimator_(sensorless_estimator),
       controller_(controller),
       motor_(motor),
-      trap_(trap),
+      trap_traj_(trap),
       min_endstop_(min_endstop),
       max_endstop_(max_endstop)
 {
@@ -33,7 +33,7 @@ Axis::Axis(int axis_num,
     sensorless_estimator_.axis_ = this;
     controller_.axis_ = this;
     motor_.axis_ = this;
-    trap_.axis_ = this;
+    trap_traj_.axis_ = this;
     min_endstop_.axis_ = this;
     max_endstop_.axis_ = this;
     decode_step_dir_pins();
@@ -87,7 +87,7 @@ static void run_state_machine_loop_wrapper(void* ctx) {
 // @brief Starts run_state_machine_loop in a new thread
 void Axis::start_thread() {
     osThreadDef(thread_def, run_state_machine_loop_wrapper, hw_config_.thread_priority, 0, stack_size_ / sizeof(StackType_t));
-    thread_id_       = osThreadCreate(osThread(thread_def), this);
+    thread_id_ = osThreadCreate(osThread(thread_def), this);
     thread_id_valid_ = true;
 }
 
@@ -161,25 +161,10 @@ bool Axis::do_checks() {
     if ((current_state_ != AXIS_STATE_IDLE) && (motor_.armed_state_ == Motor::ARMED_STATE_DISARMED))
         // motor got disarmed in something other than the idle loop
         error_ |= ERROR_MOTOR_DISARMED;
-    if (!(vbus_voltage >= board_config.dc_bus_undervoltage_trip_level))
+    if (!(vbus_voltage >= odrv.config_.dc_bus_undervoltage_trip_level))
         error_ |= ERROR_DC_BUS_UNDER_VOLTAGE;
-    if (!(vbus_voltage <= board_config.dc_bus_overvoltage_trip_level))
+    if (!(vbus_voltage <= odrv.config_.dc_bus_overvoltage_trip_level))
         error_ |= ERROR_DC_BUS_OVER_VOLTAGE;
-
-    // This is the same math that's used in update_brake_current().  Should we calculate IBus globally?
-    float Ibus_sum = 0.0f;
-    for (size_t i = 0; i < AXIS_COUNT; ++i) {
-        if (axes[i]->motor_.armed_state_ == Motor::ARMED_STATE_ARMED) {
-            Ibus_sum += axes[i]->motor_.current_control_.Ibus;
-        }
-    }
-
-    if (Ibus_sum > board_config.power_supply_max_current) {
-        error_ |= ERROR_DC_BUS_OVER_CURRENT;
-    }
-    if (Ibus_sum < board_config.power_supply_min_current) {
-        error_ |= ERROR_DC_BUS_UNDER_CURRENT;
-    }
 
     // Sub-components should use set_error which will propegate to this error_
     motor_.do_checks();
@@ -188,7 +173,7 @@ bool Axis::do_checks() {
     // controller_.do_checks();
 
     // Check for endstop presses
-    bool vel_dependent_stopping = (current_state_ == AXIS_STATE_HOMING) && (controller_.config_.control_mode >= Controller::CTRL_MODE_VELOCITY_CONTROL);
+    bool vel_dependent_stopping = (current_state_ == AXIS_STATE_HOMING) && (controller_.config_.control_mode >= Controller::CONTROL_MODE_VELOCITY_CONTROL);
     if (min_endstop_.config_.enabled && min_endstop_.get_state() && (!vel_dependent_stopping || controller_.vel_setpoint_ < 0.0f)) {
         error_ |= ERROR_MIN_ENDSTOP_PRESSED;
     } else if (max_endstop_.config_.enabled && max_endstop_.get_state() && (!vel_dependent_stopping || controller_.vel_setpoint_ > 0.0f)) {
@@ -217,9 +202,7 @@ void Axis::watchdog_feed() {
 
 // @brief Check the watchdog timer for expiration. Also sets the watchdog error bit if expired.
 bool Axis::watchdog_check() {
-    // reset value = 0 means watchdog disabled.
     if (!config_.enable_watchdog) return true;
-    if (get_watchdog_reset() == 0) return true;
 
     // explicit check here to ensure that we don't underflow back to UINT32_MAX
     if (watchdog_current_value_ > 0) {
@@ -303,10 +286,10 @@ bool Axis::run_sensorless_control_loop() {
 
     run_control_loop([this](){
         // Note that all estimators are updated in the loop prefix in run_control_loop
-        float current_setpoint;
-        if (!controller_.update(&current_setpoint))
+        float torque_setpoint;
+        if (!controller_.update(&torque_setpoint))
             return error_ |= ERROR_CONTROLLER_FAILED, false;
-        if (!motor_.update(current_setpoint, sensorless_estimator_.phase_, sensorless_estimator_.vel_estimate_))
+        if (!motor_.update(torque_setpoint, sensorless_estimator_.phase_, sensorless_estimator_.vel_estimate_))
             return false; // set_error should update axis.error_
         return true;
     });
@@ -323,17 +306,17 @@ bool Axis::run_closed_loop_control_loop() {
     controller_.input_pos_ = *controller_.pos_estimate_src_;
 
     // Avoid integrator windup issues
-    controller_.vel_integrator_current_ = 0.0f;
+    controller_.vel_integrator_torque_ = 0.0f;
 
     set_step_dir_active(config_.enable_step_dir);
     run_control_loop([this](){
         // Note that all estimators are updated in the loop prefix in run_control_loop
-        float current_setpoint;
-        if (!controller_.update(&current_setpoint))
+        float torque_setpoint;
+        if (!controller_.update(&torque_setpoint))
             return error_ |= ERROR_CONTROLLER_FAILED, false;
 
         float phase_vel = 2 * M_PI * encoder_.vel_estimate_ / (float)encoder_.config_.cpr * motor_.config_.pole_pairs;
-        if (!motor_.update(current_setpoint, encoder_.phase_, phase_vel))
+        if (!motor_.update(torque_setpoint, encoder_.phase_, phase_vel))
             return false; // set_error should update axis.error_
 
         return true;
@@ -346,8 +329,8 @@ bool Axis::run_closed_loop_control_loop() {
 // Slowly drive in the negative direction at homing_speed until the min endstop is pressed
 // When pressed, set the linear count to the offset (default 0), and then go to position 0
 bool Axis::run_homing() {
-    Controller::ControlMode_t stored_control_mode = controller_.config_.control_mode;
-    Controller::InputMode_t stored_input_mode = controller_.config_.input_mode;
+    Controller::ControlMode stored_control_mode = controller_.config_.control_mode;
+    Controller::InputMode stored_input_mode = controller_.config_.input_mode;
 
     // TODO: theoretically this check should be inside the update loop,
     // otherwise someone could disable the endstop while homing is in progress.
@@ -355,13 +338,13 @@ bool Axis::run_homing() {
         return error_ |= ERROR_HOMING_WITHOUT_ENDSTOP, false;
     }
 
-    controller_.config_.control_mode = Controller::CTRL_MODE_VELOCITY_CONTROL;
+    controller_.config_.control_mode = Controller::CONTROL_MODE_VELOCITY_CONTROL;
     controller_.config_.input_mode = Controller::INPUT_MODE_VEL_RAMP;
 
     controller_.input_pos_ = 0.0f;
     controller_.input_pos_updated();
     controller_.input_vel_ = -controller_.config_.homing_speed;
-    controller_.input_current_ = 0.0f;
+    controller_.input_torque_ = 0.0f;
 
     homing_.is_homed = false;
 
@@ -373,16 +356,16 @@ bool Axis::run_homing() {
     controller_.pos_setpoint_ = *controller_.pos_estimate_src_;
 
     // Avoid integrator windup issues
-    controller_.vel_integrator_current_ = 0.0f;
+    controller_.vel_integrator_torque_ = 0.0f;
 
     run_control_loop([this](){
         // Note that all estimators are updated in the loop prefix in run_control_loop
-        float current_setpoint;
-        if (!controller_.update(&current_setpoint))
+        float torque_setpoint;
+        if (!controller_.update(&torque_setpoint))
             return error_ |= ERROR_CONTROLLER_FAILED, false;
 
         float phase_vel = 2 * M_PI * encoder_.vel_estimate_ / (float)encoder_.config_.cpr * motor_.config_.pole_pairs;
-        if (!motor_.update(current_setpoint, encoder_.phase_, phase_vel))
+        if (!motor_.update(torque_setpoint, encoder_.phase_, phase_vel))
             return false; // set_error should update axis.error_
 
         return !min_endstop_.get_state();
@@ -394,24 +377,24 @@ bool Axis::run_homing() {
     controller_.vel_setpoint_ = 0.0f;  // Change directions without decelerating
 
     // Set our current position in encoder counts to make control more logical
-    encoder_.set_linear_count(static_cast<int32_t>(controller_.pos_setpoint_));
+    encoder_.set_linear_count((int32_t)controller_.pos_setpoint_);
 
-    controller_.config_.control_mode = Controller::CTRL_MODE_POSITION_CONTROL;
+    controller_.config_.control_mode = Controller::CONTROL_MODE_POSITION_CONTROL;
     controller_.config_.input_mode = Controller::INPUT_MODE_TRAP_TRAJ;
 
     controller_.input_pos_ = 0.0f;
     controller_.input_pos_updated();
     controller_.input_vel_ = 0.0f;
-    controller_.input_current_ = 0.0f;
+    controller_.input_torque_ = 0.0f;
 
     run_control_loop([this](){
         // Note that all estimators are updated in the loop prefix in run_control_loop
-        float current_setpoint;
-        if (!controller_.update(&current_setpoint))
+        float torque_setpoint;
+        if (!controller_.update(&torque_setpoint))
             return error_ |= ERROR_CONTROLLER_FAILED, false;
 
         float phase_vel = 2 * M_PI * encoder_.vel_estimate_ / (float)encoder_.config_.cpr * motor_.config_.pole_pairs;
-        if (!motor_.update(current_setpoint, encoder_.phase_, phase_vel))
+        if (!motor_.update(torque_setpoint, encoder_.phase_, phase_vel))
             return false; // set_error should update axis.error_
 
         return !controller_.trajectory_done_;
@@ -514,7 +497,7 @@ void Axis::run_state_machine_loop() {
             case AXIS_STATE_LOCKIN_SPIN: {
                 if (!motor_.is_calibrated_ || motor_.config_.direction==0)
                     goto invalid_state_label;
-                status = run_lockin_spin(config_.lockin);
+                status = run_lockin_spin(config_.general_lockin);
             } break;
 
             case AXIS_STATE_SENSORLESS_CONTROL: {

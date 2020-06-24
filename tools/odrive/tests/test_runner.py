@@ -48,6 +48,21 @@ def test_assert_eq(observed, expected, range=None, accuracy=None):
         if observed != expected:
             raise TestFailed("value mismatch: expected {} but observed {}".format(expected, observed))
 
+def test_assert_within(observed, lower_bound, upper_bound, accuracy=0.0):
+    """
+    Checks if the value is within the closed interval [lower_bound, upper_bound]
+    The permissible range can be expanded in both direction by the coefficiont "accuracy".
+    I.e. accuracy of 1.0 would expand the range by a total factor of 3.0
+    """
+
+    lower_bound, upper_bound = (
+        (lower_bound - (upper_bound - lower_bound) * accuracy),
+        (upper_bound + (upper_bound - lower_bound) * accuracy)
+    )
+
+    if (observed < lower_bound) or (observed > upper_bound):
+        raise TestFailed(f"the oberved value {observed} is outside the interval [{lower_bound}, {upper_bound}]")
+
 
 # Other utils -----------------------------------------------------------------#
 
@@ -74,6 +89,9 @@ def all_unique(lst):
 def modpm(val, range):
     return ((val + (range / 2)) % range) - (range / 2)
 
+def clamp(val, lower_bound, upper_bound):
+    return min(max(val, lower_bound), upper_bound)
+
 def record_log(data_getter, duration=5.0):
     logger.debug(f"Recording log for {duration}s...")
     data = []
@@ -82,9 +100,9 @@ def record_log(data_getter, duration=5.0):
         data.append((time.monotonic() - start,) + tuple(data_getter()))
     return np.array(data)
 
-def save_log(data):
+def save_log(data, id=None):
     import json
-    filename = '/tmp/log.json'
+    filename = '/tmp/log{}.json'.format('' if id is None else str(id))
     with open(filename, 'w+') as fp:
         json.dump(data.tolist(), fp, indent=2)
     print(f'data saved to {filename}')
@@ -176,7 +194,7 @@ def test_watchdog(axis, feed_func, logger: Logger):
         
     logger.debug('letting watchdog expire...')
     time.sleep(1.3) # let the watchdog expire
-    test_assert_eq(axis.error, errors.axis.ERROR_WATCHDOG_TIMER_EXPIRED)
+    test_assert_eq(axis.error, AXIS_ERROR_WATCHDOG_TIMER_EXPIRED)
 
 # Test Components -------------------------------------------------------------#
 
@@ -194,6 +212,9 @@ class ODriveComponent(Component):
         for i in range(1,9):
             self.__setattr__('gpio' + str(i), Component(self))
         self.can = Component(self)
+        self.sck = Component(self)
+        self.miso = Component(self)
+        self.mosi = Component(self)
 
     def get_subcomponents(self):
         for enc_ctx in self.encoders:
@@ -203,6 +224,9 @@ class ODriveComponent(Component):
         for i in range(1,9):
             yield ('gpio' + str(i)), getattr(self, 'gpio' + str(i))
         yield 'can', self.can
+        yield 'spi.sck', self.sck
+        yield 'spi.miso', self.miso
+        yield 'spi.mosi', self.mosi
 
     def prepare(self, logger: Logger):
         """
@@ -404,7 +428,7 @@ class TeensyComponent(Component):
         env['ARDUINO_COMPILE_DESTINATION'] = hexfile
         run_shell(
             ['arduino', '--board', 'teensy:avr:teensy40', '--verify', sketchfile],
-            logger, env = env, timeout = 60)
+            logger, env = env, timeout = 120)
 
     def program(self, hex_file_path: str, logger: Logger):
         """
@@ -655,7 +679,7 @@ def select_params(param_options):
     # Select parameters from the resource list
     # (this could be arbitrarily complex to improve parallelization of the tests)
     for combination in get_combinations(param_options):
-        if all_unique(combination):
+        if all_unique([x for x in combination if isinstance(x, Component)]):
             return list(combination)
 
     return None
@@ -684,7 +708,7 @@ def run(tests):
         test_cases = list(test.get_test_cases(testrig))
 
         if len(test_cases) == 0:
-            logger.warn('no resources are available to conduct the test {}'.format(type(test).__name__))
+            logger.warn('no test cases are available to conduct the test {}'.format(type(test).__name__))
             continue
         
         for test_case in test_cases:
@@ -757,12 +781,12 @@ if args.setup_host:
         if not os.path.isdir("/sys/class/gpio/gpio{}".format(num)):
             with open("/sys/class/gpio/export", "w") as fp:
                 fp.write(str(num))
-        os.chmod("/sys/class/gpio/gpio{}/value".format(num), stat.S_IROTH | stat.S_IWOTH)
-        os.chmod("/sys/class/gpio/gpio{}/direction".format(num), stat.S_IROTH | stat.S_IWOTH)
+        os.chmod("/sys/class/gpio/gpio{}/value".format(num), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+        os.chmod("/sys/class/gpio/gpio{}/direction".format(num), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
 
     for port in testrig.get_components(SerialPortComponent):
         logger.debug('changing permissions on ' + port.yaml['port'] + '...')
-        os.chmod(port.yaml['port'], stat.S_IROTH | stat.S_IWOTH)
+        os.chmod(port.yaml['port'], stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
 
     if len(list(testrig.get_components(TeensyComponent))):
         # This breaks the annoying teensy loader that shows up on every compile

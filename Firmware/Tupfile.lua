@@ -1,6 +1,40 @@
 
 tup.include('build.lua')
 
+-- If we simply invoke python or python3 on a pristine Windows 10, it will try
+-- to open the Microsoft Store which will not work and hang tup instead. The
+-- command "python --version" does not open the Microsoft Store.
+-- On some systems this may return a python2 command if Python3 is not installed.
+function find_python3()
+    success, python_version = run_now("python --version")
+    if success and string.match(python_version, "Python 3") then return "python -B" end
+    success, python_version = run_now("python3 --version")
+    if success and string.match(python_version, "Python 3") then return "python3 -B" end
+    error("Python 3 not found.")
+end
+
+python_command = find_python3()
+print('Using python command "'..python_command..'"')
+
+run_now("")
+
+tup.frule{inputs={'fibre/cpp/interfaces_template.j2'}, command=python_command..' interface_generator_stub.py --definitions odrive-interface.yaml --template %f --output %o', outputs='autogen/interfaces.hpp'}
+tup.frule{inputs={'fibre/cpp/function_stubs_template.j2'}, command=python_command..' interface_generator_stub.py --definitions odrive-interface.yaml --template %f --output %o', outputs='autogen/function_stubs.hpp'}
+tup.frule{inputs={'fibre/cpp/endpoints_template.j2'}, command=python_command..' interface_generator_stub.py --definitions odrive-interface.yaml --generate-endpoints ODrive --template %f --output %o', outputs='autogen/endpoints.hpp'}
+tup.frule{inputs={'fibre/cpp/type_info_template.j2'}, command=python_command..' interface_generator_stub.py --definitions odrive-interface.yaml --template %f --output %o', outputs='autogen/type_info.hpp'}
+
+-- Note: we currently check this file into source control for two reasons:
+--  - Don't require tup to run in order to use odrivetool from the repo
+--  - On Windows, tup is unhappy with writing outside of the tup directory
+-- TODO: use CI to verify that on PRs the enums.py file is consistent with the YAML.
+--tup.frule{command=python_command..' interface_generator_stub.py --definitions odrive-interface.yaml --template enums_template.j2 --output ../tools/odrive/enums.py'}
+
+tup.frule{
+    command=python_command..' ../tools/odrive/version.py --output %o',
+    outputs={'autogen/version.h'}
+}
+
+
 -- Switch between board versions
 boardversion = tup.getconfig("BOARD_VERSION")
 if boardversion == "v3.1" then
@@ -86,7 +120,6 @@ if tup.getconfig("STRICT") == "true" then
     FLAGS += '-Werror'
 end
 
-
 -- C-specific flags
 FLAGS += '-D__weak="__attribute__((weak))"'
 FLAGS += '-D__packed="__attribute__((__packed__))"'
@@ -145,10 +178,6 @@ build{
     includes=stm_includes
 }
 
-tup.frule{
-    command='python ../tools/odrive/version.py --output %o',
-    outputs={'build/version.h'}
-}
 
 build{
     name='ODriveFirmware',

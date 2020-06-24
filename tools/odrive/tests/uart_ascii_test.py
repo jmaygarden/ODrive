@@ -31,6 +31,10 @@ def reset_state(ser):
     ser.flushInput() # discard response
 
 class TestUartAscii():
+    """
+    Tests the most important functions of the ASCII protocol.
+    """
+
     def get_test_cases(self, testrig: TestRig):
         for odrive in testrig.get_components(ODriveComponent):
             ports = list(testrig.get_connected_components({
@@ -40,10 +44,6 @@ class TestUartAscii():
             yield (odrive, ports)
 
     def run_test(self, odrive: ODriveComponent, port: SerialPortComponent, logger: Logger):
-        """
-        Tests the most important functions of the ASCII protocol.
-        """
-
         logger.debug('Enabling UART...')
         # GPIOs might be in use by something other than UART and some components
         # might be configured so that they would fail in the later test.
@@ -89,32 +89,41 @@ class TestUartAscii():
             response = int(ser.readline().strip())
             test_assert_eq(response, 12345)
 
+            # Test custom setter (aka property write hook)
+            odrive.handle.axis0.motor.config.phase_resistance = 1
+            odrive.handle.axis0.motor.config.phase_inductance = 1
+            odrive.handle.axis0.motor.config.current_control_bandwidth = 1000
+            old_gain = odrive.handle.axis0.motor.current_control.p_gain
+            test_assert_eq(old_gain, 1000, accuracy=0.0001) # must be non-zero for subsequent check to work
+            ser.write('w axis0.motor.config.current_control_bandwidth {}\n'.format(odrive.handle.axis0.motor.config.current_control_bandwidth / 2).encode('ascii'))
+            test_assert_eq(ser.readline(), b'')
+            test_assert_eq(odrive.handle.axis0.motor.current_control.p_gain, old_gain / 2, accuracy=0.0001)
 
             # Test 'c', 'v', 'p', 'q' and 'f' commands
 
-            odrive.handle.axis0.controller.input_current = 0
+            odrive.handle.axis0.controller.input_torque = 0
             ser.write(b'c 0 12.5\n')
             test_assert_eq(ser.readline(), b'')
-            test_assert_eq(odrive.handle.axis0.controller.input_current, 12.5, accuracy=0.001)
-            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CTRL_MODE_CURRENT_CONTROL)
+            test_assert_eq(odrive.handle.axis0.controller.input_torque, 12.5, accuracy=0.001)
+            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CONTROL_MODE_CURRENT_CONTROL)
 
             odrive.handle.axis0.controller.input_vel = 0
-            odrive.handle.axis0.controller.input_current = 0
+            odrive.handle.axis0.controller.input_torque = 0
             ser.write(b'v 0 567.8 12.5\n')
             test_assert_eq(ser.readline(), b'')
             test_assert_eq(odrive.handle.axis0.controller.input_vel, 567.8, accuracy=0.001)
-            test_assert_eq(odrive.handle.axis0.controller.input_current, 12.5, accuracy=0.001)
-            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CTRL_MODE_VELOCITY_CONTROL)
+            test_assert_eq(odrive.handle.axis0.controller.input_torque, 12.5, accuracy=0.001)
+            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CONTROL_MODE_VELOCITY_CONTROL)
 
             odrive.handle.axis0.controller.input_pos = 0
             odrive.handle.axis0.controller.input_vel = 0
-            odrive.handle.axis0.controller.input_current = 0
+            odrive.handle.axis0.controller.input_torque = 0
             ser.write(b'p 0 123.4 567.8 12.5\n')
             test_assert_eq(ser.readline(), b'')
             test_assert_eq(odrive.handle.axis0.controller.input_pos, 123.4, accuracy=0.001)
             test_assert_eq(odrive.handle.axis0.controller.input_vel, 567.8, accuracy=0.001)
-            test_assert_eq(odrive.handle.axis0.controller.input_current, 12.5, accuracy=0.001)
-            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CTRL_MODE_POSITION_CONTROL)
+            test_assert_eq(odrive.handle.axis0.controller.input_torque, 12.5, accuracy=0.001)
+            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CONTROL_MODE_POSITION_CONTROL)
 
             odrive.handle.axis0.controller.input_pos = 0
             odrive.handle.axis0.controller.config.vel_limit = 0
@@ -124,7 +133,7 @@ class TestUartAscii():
             test_assert_eq(odrive.handle.axis0.controller.input_pos, 123.4, accuracy=0.001)
             test_assert_eq(odrive.handle.axis0.controller.config.vel_limit, 567.8, accuracy=0.001)
             test_assert_eq(odrive.handle.axis0.motor.config.current_lim, 12.5, accuracy=0.001)
-            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CTRL_MODE_POSITION_CONTROL)
+            test_assert_eq(odrive.handle.axis0.controller.config.control_mode, CONTROL_MODE_POSITION_CONTROL)
 
             ser.write(b'f 0\n')
             response = ser.readline().strip()
@@ -138,7 +147,11 @@ class TestUartAscii():
             # TODO: test cases for 't', 'ss', 'se', 'sr' commands
 
 
-class TestUartBurnIn():
+class TestUartBaudrate():
+    """
+    Tests if the UART baudrate setting works as intended.
+    """
+
     def get_test_cases(self, testrig: TestRig):
         for odrive in testrig.get_components(ODriveComponent):
             ports = list(testrig.get_connected_components({
@@ -148,10 +161,47 @@ class TestUartBurnIn():
             yield (odrive, ports)
 
     def run_test(self, odrive: ODriveComponent, port: SerialPortComponent, logger: Logger):
-        """
-        Tests if the ASCII protocol can handle 64kB of random data being thrown at it.
-        """
+        odrive.handle.axis0.config.enable_step_dir = False
+        odrive.handle.config.enable_uart = True
 
+        odrive.handle.config.uart_baudrate = 9600
+        odrive.save_config_and_reboot()
+
+        # Control test: talk to the ODrive with the wrong baudrate
+        with port.open(115200) as ser:
+            # reset port to known state
+            reset_state(ser)
+
+            ser.write(b'r vbus_voltage\n')
+            test_assert_eq(ser.readline().strip(), b'')
+
+        with port.open(9600) as ser:
+            # reset port to known state
+            reset_state(ser)
+
+            # Check if protocol works
+            ser.write(b'r vbus_voltage\n')
+            response = float(ser.readline().strip())
+            test_assert_eq(response, odrive.handle.vbus_voltage, accuracy=0.1)
+
+        odrive.handle.config.uart_baudrate = 115200
+        odrive.save_config_and_reboot()
+
+
+class TestUartBurnIn():
+    """
+    Tests if the ASCII protocol can handle 64kB of random data being thrown at it.
+    """
+
+    def get_test_cases(self, testrig: TestRig):
+        for odrive in testrig.get_components(ODriveComponent):
+            ports = list(testrig.get_connected_components({
+                'rx': (odrive.gpio1, True),
+                'tx': (odrive.gpio2, False)
+            }, SerialPortComponent))
+            yield (odrive, ports)
+
+    def run_test(self, odrive: ODriveComponent, port: SerialPortComponent, logger: Logger):
         odrive.handle.axis0.config.enable_step_dir = False
         odrive.handle.config.enable_uart = True
 
@@ -170,6 +220,10 @@ class TestUartBurnIn():
 
 
 class TestUartNoise():
+    """
+    Tests if the UART can handle invalid signals.
+    """
+    
     def get_test_cases(self, testrig: TestRig):
         for odrive in testrig.get_components(ODriveComponent):
             # For every ODrive, find a connected serial port which has a teensy
@@ -200,9 +254,6 @@ class TestUartNoise():
             yield (odrive, ports)
 
     def run_test(self, odrive: ODriveComponent, port: SerialPortComponent, noise_enable: LinuxGpioComponent, logger: Logger):
-        """
-        Tests if the UART can handle invalid signals.
-        """
         noise_enable.config(output=True)
         noise_enable.write(False)
         time.sleep(0.1)
@@ -244,6 +295,7 @@ class TestUartNoise():
 if __name__ == '__main__':
     test_runner.run([
         TestUartAscii(),
+        TestUartBaudrate(),
         TestUartBurnIn(),
         TestUartNoise(),
     ])

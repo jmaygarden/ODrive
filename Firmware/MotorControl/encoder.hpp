@@ -47,6 +47,7 @@ public:
         float calib_scan_distance = 16.0f * M_PI; // rad electrical
         float calib_scan_omega = 4.0f * M_PI; // rad/s electrical
         float bandwidth = 1000.0f;
+        float acceleration_alpha = 0.004;
         bool find_idx_on_lockin_only = false; // Only be sensitive during lockin scan constant vel state
         bool idx_search_unidirectional = false; // Only allow index search in known direction
         bool ignore_illegal_hall_state = false; // dont error on bad states like 000 or 111
@@ -91,6 +92,7 @@ public:
     float pos_estimate_ = 0.0f;  // [count]
     float pos_cpr_ = 0.0f;  // [count]
     float vel_estimate_ = 0.0f;  // [count/s]
+    float acc_estimate_ = 0.0f;  // [count/s^s]
     float pll_kp_ = 0.0f;   // [count/s / count]
     float pll_ki_ = 0.0f;   // [(count/s^2) / count]
     float calib_scan_response_ = 0.0f; // debug report from offset calib
@@ -138,6 +140,7 @@ public:
             make_protocol_ro_property("pos_cpr", &pos_cpr_),
             make_protocol_ro_property("hall_state", &hall_state_),
             make_protocol_ro_property("vel_estimate", &vel_estimate_),
+            make_protocol_ro_property("acc_estimate", &acc_estimate_),
             make_protocol_ro_property("calib_scan_response", &calib_scan_response_),
             make_protocol_property("pos_abs", &pos_abs_),
             make_protocol_ro_property("spi_error_rate", &spi_error_rate_),
@@ -159,6 +162,7 @@ public:
                 make_protocol_property("enable_phase_interpolation", &config_.enable_phase_interpolation),
                 make_protocol_property("bandwidth", &config_.bandwidth,
                     [](void* ctx) { static_cast<Encoder*>(ctx)->update_pll_gains(); }, this),
+                make_protocol_property("acceleration_alpha", &config_.acceleration_alpha),
                 make_protocol_property("calib_range", &config_.calib_range),
                 make_protocol_property("calib_scan_distance", &config_.calib_scan_distance),
                 make_protocol_property("calib_scan_omega", &config_.calib_scan_omega),

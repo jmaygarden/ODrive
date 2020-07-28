@@ -114,9 +114,10 @@ extern Axis *axes[AXIS_COUNT];
 extern ODriveCAN *odCAN;
 
 // if you use the oscilloscope feature you can bump up this value
-#define OSCILLOSCOPE_SIZE 4096
+#define OSCILLOSCOPE_SIZE 8192
 extern float oscilloscope[OSCILLOSCOPE_SIZE];
 extern size_t oscilloscope_pos;
+extern bool oscilloscope_enable;
 
 // TODO: move
 // this is technically not thread-safe but practically it might be

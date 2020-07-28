@@ -494,7 +494,9 @@ bool Encoder::update() {
     pos_estimate_ += current_meas_period * pll_kp_ * delta_pos;
     pos_cpr_ += current_meas_period * pll_kp_ * delta_pos_cpr;
     pos_cpr_ = fmodf_pos(pos_cpr_, static_cast<float>(config_.cpr));
-    vel_estimate_ += current_meas_period * pll_ki_ * delta_pos_cpr;
+    float const dV = current_meas_period * pll_ki_ * delta_pos_cpr;
+    vel_estimate_ += dV;
+    acc_estimate_ += config_.acceleration_alpha * (dV / current_meas_period - acc_estimate_);
     bool snap_to_zero_vel = false;
     if (std::abs(vel_estimate_) < 0.5f * current_meas_period * pll_ki_) {
         vel_estimate_    = 0.0f;  //align delta-sigma on zero to prevent jitter

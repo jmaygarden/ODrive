@@ -57,6 +57,7 @@ public:
         float acim_rotor_flux; // [A]
         float async_phase_vel; // [rad/s electrical]
         float async_phase_offset; // [rad electrical]
+        float acceleration_ff_gain;
     };
 
     // NOTE: for gimbal motors, all units of A are instead V.
@@ -183,6 +184,7 @@ public:
         .acim_rotor_flux = 0.0f,
         .async_phase_vel = 0.0f,
         .async_phase_offset = 0.0f,
+        .acceleration_ff_gain = 0.0f,
     };
     DRV8301_FaultType_e drv_fault_ = DRV8301_FaultType_NoFault;
     DRV_SPI_8301_Vars_t gate_driver_regs_; //Local view of DRV registers (initialized by DRV8301_setup)
@@ -219,7 +221,8 @@ public:
                 make_protocol_ro_property("overcurrent_trip_level", &current_control_.overcurrent_trip_level),
                 make_protocol_property("acim_rotor_flux", &current_control_.acim_rotor_flux),
                 make_protocol_ro_property("async_phase_vel", &current_control_.async_phase_vel),
-                make_protocol_property("async_phase_offset", &current_control_.async_phase_offset)
+                make_protocol_property("async_phase_offset", &current_control_.async_phase_offset),
+                make_protocol_property("acceleration_ff_gain", &current_control_.acceleration_ff_gain)
             ),
             make_protocol_object("gate_driver",
                 make_protocol_ro_property("drv_fault", &drv_fault_)

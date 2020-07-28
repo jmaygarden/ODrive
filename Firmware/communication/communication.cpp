@@ -95,6 +95,7 @@ void init_communication(void) {
 
 float oscilloscope[OSCILLOSCOPE_SIZE] = {0};
 size_t oscilloscope_pos = 0;
+bool oscilloscope_enable = true;
 
 // Helper class because the protocol library doesn't yet
 // support non-member functions
@@ -183,6 +184,7 @@ static inline auto make_obj_tree() {
         make_protocol_object("axis1", axes[1]->make_protocol_definitions()),
         make_protocol_object("can", odCAN->make_protocol_definitions()),
         make_protocol_property("test_property", &test_property),
+        make_protocol_property("oscilloscope_enable", &oscilloscope_enable),
         make_protocol_function("test_function", static_functions, &StaticFunctions::test_function, "delta"),
         make_protocol_function("get_oscilloscope_val", static_functions, &StaticFunctions::get_oscilloscope_val, "index"),
         make_protocol_function("get_adc_voltage", static_functions, &StaticFunctions::get_adc_voltage_, "gpio"),

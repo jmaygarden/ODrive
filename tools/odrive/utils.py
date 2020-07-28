@@ -66,9 +66,11 @@ def dump_errors(odrv, clear=False):
 
 def oscilloscope_dump(odrv, num_vals, filename='oscilloscope.csv'):
     with open(filename, 'w') as f:
+        odrv.oscilloscope_enable = False
         for x in range(num_vals):
             f.write(str(odrv.get_oscilloscope_val(x)))
             f.write('\n')
+        odrv.oscilloscope_enable = True
 
 data_rate = 10
 plot_rate = 10

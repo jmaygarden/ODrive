@@ -337,6 +337,19 @@ bool Motor::FOC_current(float Id_des, float Iq_des, float I_phase, float pwm_pha
     // Syntactic sugar
     CurrentControl_t& ictrl = current_control_;
 
+    // Compute acceleration feedforward term
+    float const ROTOR_INERTIA = 0.058f; // kg m^2
+    float const TORQUE_CONSTANT = 1.3f; // (N m) / A
+    float const COUNTS_TO_RADIANS = 2.f * PI / axis_->encoder_.config_.cpr;
+    float const feedforward =
+        (ictrl.acceleration_ff_gain * ROTOR_INERTIA / TORQUE_CONSTANT) *
+        (COUNTS_TO_RADIANS * axis_->encoder_.acc_estimate_);
+
+    // Apply feedforward term
+    if (feedforward > 0.f) {
+        Iq_des += feedforward;
+    }
+
     // For Reporting
     ictrl.Iq_setpoint = Iq_des;
 
@@ -413,6 +426,7 @@ bool Motor::FOC_current(float Id_des, float Iq_des, float I_phase, float pwm_pha
 
     if (axis_->axis_num_ == 0) {
 
+#if 0
         // Edit these to suit your capture needs
         float trigger_data = ictrl.v_current_control_integral_d;
         float trigger_threshold = 0.5f;
@@ -434,6 +448,33 @@ bool Motor::FOC_current(float Id_des, float Iq_des, float I_phase, float pwm_pha
                 capturing = false;
             }
         }
+#elif 0
+        if (oscilloscope_enable) {
+            oscilloscope[oscilloscope_pos] = axis_->encoder_.shadow_count_;
+            if (++oscilloscope_pos >= OSCILLOSCOPE_SIZE) {
+                oscilloscope_pos = 0;
+            }
+            oscilloscope[oscilloscope_pos] = axis_->encoder_.vel_estimate_;
+            if (++oscilloscope_pos >= OSCILLOSCOPE_SIZE) {
+                oscilloscope_pos = 0;
+            }
+            oscilloscope[oscilloscope_pos] = axis_->encoder_.acc_estimate_;
+            if (++oscilloscope_pos >= OSCILLOSCOPE_SIZE) {
+                oscilloscope_pos = 0;
+            }
+            oscilloscope[oscilloscope_pos] = current_control_.Iq_measured;
+            if (++oscilloscope_pos >= OSCILLOSCOPE_SIZE) {
+                oscilloscope_pos = 0;
+            }
+        }
+#else
+        if (oscilloscope_enable) {
+            oscilloscope[oscilloscope_pos] = feedforward;
+            if (++oscilloscope_pos >= OSCILLOSCOPE_SIZE) {
+                oscilloscope_pos = 0;
+            }
+        }
+#endif
     }
 
     return true;

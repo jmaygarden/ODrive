@@ -33,6 +33,7 @@ class CANSimple {
         MSG_CLEAR_ERRORS,
         MSG_GET_AXIS_STATUS,
         MSG_ODRIVE_FEEDBACK,
+        MSG_GET_TERMPERATURE,
         MSG_CO_HEARTBEAT_CMD = 0x700,  // CANOpen NMT Heartbeat  SEND
     };
 
@@ -66,6 +67,7 @@ class CANSimple {
     static void get_vbus_voltage_callback(Axis* axis, can_Message_t& msg);
     static void clear_errors_callback(Axis* axis, can_Message_t& msg);
     static void get_axis_status(Axis* axis, can_Message_t& msg);
+    static void get_temperature(Axis* axis, can_Message_t& msg);
 
     // Utility functions
     static uint8_t get_node_id(uint32_t msgID);

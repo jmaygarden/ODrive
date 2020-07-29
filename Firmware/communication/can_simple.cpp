@@ -122,6 +122,9 @@ void CANSimple::handle_can_message(can_Message_t& msg) {
             case MSG_GET_AXIS_STATUS:
                 get_axis_status(axis, msg);
                 break;
+            case MSG_GET_TERMPERATURE:
+                get_temperature(axis, msg);
+                break;
             default:
                 break;
         }
@@ -406,6 +409,30 @@ void CANSimple::get_axis_status(Axis* axis, can_Message_t& msg) {
         txmsg.buf[5] = axis->current_state_ >> 8;
         txmsg.buf[6] = axis->current_state_ >> 16;
         txmsg.buf[7] = axis->current_state_ >> 24;
+        odCAN->write(txmsg);
+    }
+}
+
+void CANSimple::get_temperature(Axis* axis, can_Message_t& msg) {
+    if (msg.rtr) {
+        can_Message_t txmsg;
+        union {
+            float f32;
+            uint32_t u32;
+        } temperature;
+
+        txmsg.id = axis->config_.can_node_id << NUM_CMD_ID_BITS;
+        txmsg.id += MSG_GET_TERMPERATURE;  // heartbeat ID
+        txmsg.isExt = false;
+        txmsg.len = 4;
+
+        // inverter temperature
+        temperature.f32 = axis->motor_.get_inverter_temp();
+        txmsg.buf[0] = temperature.u32;
+        txmsg.buf[1] = temperature.u32 >> 8;
+        txmsg.buf[2] = temperature.u32 >> 16;
+        txmsg.buf[3] = temperature.u32 >> 24;
+
         odCAN->write(txmsg);
     }
 }

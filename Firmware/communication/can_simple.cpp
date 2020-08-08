@@ -419,19 +419,25 @@ void CANSimple::get_temperature(Axis* axis, can_Message_t& msg) {
         union {
             float f32;
             uint32_t u32;
-        } temperature;
+        } value;
 
         txmsg.id = axis->config_.can_node_id << NUM_CMD_ID_BITS;
         txmsg.id += MSG_GET_TERMPERATURE;  // heartbeat ID
         txmsg.isExt = false;
-        txmsg.len = 4;
+        txmsg.len = 8;
 
         // inverter temperature
-        temperature.f32 = axis->motor_.get_inverter_temp();
-        txmsg.buf[0] = temperature.u32;
-        txmsg.buf[1] = temperature.u32 >> 8;
-        txmsg.buf[2] = temperature.u32 >> 16;
-        txmsg.buf[3] = temperature.u32 >> 24;
+        value.f32 = axis->motor_.get_inverter_temp();
+        txmsg.buf[0] = value.u32;
+        txmsg.buf[1] = value.u32 >> 8;
+        txmsg.buf[2] = value.u32 >> 16;
+        txmsg.buf[3] = value.u32 >> 24;
+
+        value.f32 = get_adc_voltage(GPIO_1_GPIO_Port, GPIO_1_Pin);
+        txmsg.buf[0] = value.u32;
+        txmsg.buf[1] = value.u32 >> 8;
+        txmsg.buf[2] = value.u32 >> 16;
+        txmsg.buf[3] = value.u32 >> 24;
 
         odCAN->write(txmsg);
     }

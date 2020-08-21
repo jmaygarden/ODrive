@@ -434,10 +434,10 @@ void CANSimple::get_temperature(Axis* axis, can_Message_t& msg) {
         txmsg.buf[3] = value.u32 >> 24;
 
         value.f32 = get_adc_voltage(GPIO_1_GPIO_Port, GPIO_1_Pin);
-        txmsg.buf[0] = value.u32;
-        txmsg.buf[1] = value.u32 >> 8;
-        txmsg.buf[2] = value.u32 >> 16;
-        txmsg.buf[3] = value.u32 >> 24;
+        txmsg.buf[4] = value.u32;
+        txmsg.buf[5] = value.u32 >> 8;
+        txmsg.buf[6] = value.u32 >> 16;
+        txmsg.buf[7] = value.u32 >> 24;
 
         odCAN->write(txmsg);
     }
